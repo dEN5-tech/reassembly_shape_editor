@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reassembly Shape Editor</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            width: 100%;
+            overflow: hidden;
+            background-color: #202020;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        #app-container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ffffff;
+            font-size: 20px;
+            text-align: center;
+        }
+        
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid #ffffff;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <div id="loading">
+            <div class="spinner"></div>
+            <p>Loading Reassembly Shape Editor...</p>
+        </div>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <script type="module">
+        // Load the WASM package and initialize it
+        import init, { start } from './pkg/reassembly_shape_editor.js';
+        
+        async function run() {
+            // First, initialize the WASM module
+            await init();
+            
+            // Remove the loading indicator
+            document.getElementById('loading').style.display = 'none';
+            
+            // Start the application with the canvas ID
+            try {
+                start('canvas');
+            } catch (error) {
+                console.error("Failed to start application:", error);
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('loading').innerHTML = `
+                    <p>Failed to load the application:</p>
+                    <p style="color: #ff6b6b;">${error}</p>
+                `;
+            }
+        }
+        
+        // Run the application
+        run();
+    </script>
+</body>
+</html> 
