@@ -33,7 +33,7 @@ jobs:
             asset_name: reassembly_shape_editor-macos.tar.gz
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     
     - name: Install dependencies (Linux)
       if: matrix.os == 'ubuntu-latest'
@@ -79,7 +79,7 @@ jobs:
         tar -czf ${{ matrix.asset_name }} -C artifacts .
         
     - name: Upload binary artifacts
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.artifact_name }}
         path: ${{ matrix.asset_name }}
@@ -89,7 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     
     - name: Set up Rust
       uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -108,7 +108,7 @@ jobs:
         cp -r pkg/* web/pkg/
     
     - name: Upload WASM artifacts
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v4
       with:
         name: reassembly_shape_editor-wasm
         path: web/ 
