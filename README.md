@@ -93,6 +93,15 @@ python -m http.server
 
 The shape editor should now be running in your browser!
 
+### File Handling in Browser
+
+When running in a browser environment:
+
+1. The "Browse" button will open the browser's file picker to select files
+2. Imported files are read directly in the browser without server uploads
+3. Exported files are automatically downloaded to your downloads folder
+4. All file operations work locally, and your data never leaves your computer
+
 ## License
 
 This project is open source.

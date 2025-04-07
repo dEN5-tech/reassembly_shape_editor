@@ -667,3 +667,107 @@ pub fn show_tooltip(ui: &egui::Ui, response: &Response, text: &str) {
         );
     }
 }
+
+/// Creates an error dialog frame
+pub fn error_dialog_frame() -> egui::Frame {
+    egui::Frame {
+        fill: Color32::from_rgba_unmultiplied(40, 20, 20, 245), // Dark red background
+        stroke: Stroke::new(1.0, Color32::from_rgb(200, 100, 100)), // Red border
+        inner_margin: egui::style::Margin::same(12.0), // More padding for error dialogs
+        outer_margin: egui::style::Margin::same(4.0),
+        rounding: egui::Rounding::same(4.0), // Rounded corners
+        shadow: eframe::epaint::Shadow::default(), // Use default shadow
+    }
+}
+
+/// Shows a modal error dialog
+/// 
+/// # Arguments
+/// * `ctx` - The egui context
+/// * `title` - Dialog title (displayed in the window header)
+/// * `message` - Message content as RichText or convertible to RichText
+/// * `open` - Mutable reference to a boolean controlling dialog visibility
+/// 
+/// # Returns
+/// `true` if the OK button was clicked, `false` otherwise
+pub fn show_error_dialog<T: Into<egui::RichText>>(
+    ctx: &egui::Context, 
+    title: impl Into<egui::WidgetText>, 
+    message: T, 
+    open: &mut bool
+) -> bool {
+    let mut result = false;
+    
+    if *open {
+        // Center the dialog
+        let screen_rect = ctx.available_rect();
+        let dialog_size = egui::vec2(500.0, 250.0); // Larger dialog for more detailed errors
+        let dialog_pos = screen_rect.center() - dialog_size / 2.0;
+        
+        // Convert message to RichText
+        let rich_message = message.into();
+        
+        // Create a modal background overlay
+        let _overlay_frame = egui::Frame::none()
+            .fill(Color32::from_rgba_unmultiplied(0, 0, 0, 200));
+        
+        egui::Area::new("error_dialog_overlay")
+            .fixed_pos(screen_rect.min)
+            .movable(false)
+            .interactable(true)
+            .show(ctx, |ui| {
+                ui.painter().rect_filled(
+                    screen_rect,
+                    0.0,
+                    Color32::from_rgba_unmultiplied(0, 0, 0, 150)
+                );
+            });
+        
+        // Create the dialog window
+        egui::Window::new(title)
+            .fixed_pos(dialog_pos)
+            .fixed_size(dialog_size)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .frame(error_dialog_frame())
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(10.0);
+                    ui.heading(&t("error_dialog_title"));
+                    ui.add_space(10.0);
+                    
+                    // Create a scrolling area for long error messages
+                    egui::ScrollArea::vertical()
+                        .max_height(150.0)
+                        .show(ui, |ui| {
+                            // Show message text with word wrap
+                            ui.label(rich_message.size(16.0));
+                        });
+                    
+                    ui.add_space(20.0);
+                    
+                    // Ok button
+                    let _button_response = ui.with_layout(
+                        egui::Layout::bottom_up(egui::Align::Center),
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                if ui.button(&t("error_dialog_ok")).clicked() {
+                                    *open = false;
+                                    result = true;
+                                }
+                            });
+                        }
+                    );
+                });
+            });
+        
+        // Prevent interaction with the rest of the UI while dialog is open
+        ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground, 
+            egui::Id::new("error_dialog_blocker")
+        )).add(egui::Shape::Noop);
+    }
+    
+    result
+}

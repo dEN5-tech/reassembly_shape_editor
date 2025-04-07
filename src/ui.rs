@@ -89,11 +89,17 @@ pub fn render_top_panel(ctx: &egui::Context, app: &mut ShapeEditor) {
                     ui.label(&t("export_file"));
                     ui.add(egui::TextEdit::singleline(&mut app.export_path).desired_width(200.0));
                     
+                    // Add file selection button
+                    if styled_button(ui, &t("browse")).clicked() {
+                        app.select_export_file();
+                    }
+                    
                     if styled_button(ui, &t("export")).clicked() {
                         if let Err(e) = app.export_shapes() {
-                            eprintln!("{}:  {}", t("error_export"), e);
+                            app.show_error(&t("error_export"), &e.to_string());
                         } else {
-                            println!("{} {}", t("shapes_exported"), app.export_path);
+                            app.status_message = Some(format!("{} {}", t("shapes_exported"), app.export_path));
+                            app.status_time = 3.0;
                         }
                     }
                 });
@@ -110,9 +116,10 @@ pub fn render_top_panel(ctx: &egui::Context, app: &mut ShapeEditor) {
                 
                 // Export shapes
                 if let Err(e) = app.export_shapes() {
-                    eprintln!("{}:  {}", t("error_export"), e);
+                    app.show_error(&t("error_export"), &e.to_string());
                 } else {
-                    println!("{} shapes.lua", t("shapes_exported"));
+                    app.status_message = Some(format!("{} shapes.lua", t("shapes_exported")));
+                    app.status_time = 3.0;
                 }
                 
                 // Restore the original path
@@ -127,11 +134,18 @@ pub fn render_top_panel(ctx: &egui::Context, app: &mut ShapeEditor) {
                     ui.label(&t("import_file"));
                     ui.add(egui::TextEdit::singleline(&mut app.import_path).desired_width(200.0));
                     
+                    // Add file selection button
+                    if styled_button(ui, &t("browse")).clicked() {
+                        app.select_import_file();
+                    }
+                    
                     if styled_button(ui, &t("import")).clicked() {
-                        if let Err(e) = app.import_shapes() {
-                            eprintln!("{}:  {}", t("error_import"), e);
+                        if let Err(_e) = app.import_shapes() {
+                            // Error handling is now done in import_shapes()
+                            // Show errors via the dialog
                         } else {
-                            println!("{} {}", t("shapes_imported"), app.import_path);
+                            app.status_message = Some(format!("{} {}", t("shapes_imported"), app.import_path));
+                            app.status_time = 3.0;
                         }
                     }
                 });
@@ -147,10 +161,12 @@ pub fn render_top_panel(ctx: &egui::Context, app: &mut ShapeEditor) {
                 app.import_path = "shapes.lua".to_string();
                 
                 // Import shapes
-                if let Err(e) = app.import_shapes() {
-                    eprintln!("{}:  {}", t("error_import"), e);
+                if let Err(_e) = app.import_shapes() {
+                    // Error handling is now done in import_shapes()
+                    // Show errors via the dialog
                 } else {
-                    println!("{} shapes.lua", t("shapes_imported"));
+                    app.status_message = Some(format!("{} shapes.lua", t("shapes_imported")));
+                    app.status_time = 3.0;
                 }
                 
                 // Restore the original path

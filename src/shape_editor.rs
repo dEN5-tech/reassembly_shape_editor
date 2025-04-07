@@ -10,7 +10,11 @@ use crate::data_structures::{Shape as AppShape, Vertex, Port, PortType};
 use crate::geometry::round_to;
 use crate::ui::*;
 use crate::visual::*;
-use crate::lua_parser::parse_shapes_content;
+use crate::parser::{parse_shapes_content, ParseError};
+use crate::serializer::serialize_shapes_file;
+
+#[cfg(not(target_arch = "wasm32"))]
+use rfd::FileDialog;
 
 // Maximum size for undo history
 const MAX_UNDO_HISTORY: usize = 100;
@@ -41,6 +45,10 @@ pub struct ShapeEditor {
     // Settings and UI state
     pub status_message: Option<String>,
     pub status_time: f32,
+    // Error dialog state
+    pub show_error_dialog: bool,
+    pub error_title: String,
+    pub error_message: String,
 }
 
 impl ShapeEditor {
@@ -69,7 +77,18 @@ impl ShapeEditor {
             points: 200,
             status_message: None,
             status_time: 0.0,
+            // Initialize error dialog state
+            show_error_dialog: false,
+            error_title: String::new(),
+            error_message: String::new(),
         }
+    }
+    
+    // Show an error dialog with the given title and message
+    pub fn show_error(&mut self, title: &str, message: &str) {
+        self.error_title = title.to_string();
+        self.error_message = message.to_string();
+        self.show_error_dialog = true;
     }
     
     // Save current state to undo history
@@ -257,71 +276,147 @@ impl ShapeEditor {
     
     // Экспорт всех форм в файл shapes.lua
     pub fn export_shapes(&self) -> Result<(), std::io::Error> {
-        let mut content = "{\n".to_string();
-        
-        for shape in &self.shapes {
-            content.push_str(&shape.to_lua());
-            content.push_str(",\n");
+        // Convert shapes to AST shapes for export
+        let mut ast_shapes = Vec::new();
+        for app_shape in &self.shapes {
+            ast_shapes.push(self.convert_to_ast_shape(app_shape));
         }
         
-        content.push_str("}\n");
+        // Create shapes file
+        let shapes_file = crate::ast::ShapesFile { shapes: ast_shapes };
         
-        // Replace forward slashes with the OS-specific path separator
-        let path = Path::new(&self.export_path);
-        fs::write(path, content)
+        // Serialize to Lua format
+        let lua_content = serialize_shapes_file(&shapes_file);
+        
+        // Write to file
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            match fs::write(&self.export_path, lua_content) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    // This error will be displayed in the UI via the error dialog
+                    Err(e)
+                }
+            }
+        }
+        
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.download_file(&lua_content);
+            Ok(())
+        }
+    }
+    
+    // Download file in browser (WebAssembly target)
+    #[cfg(target_arch = "wasm32")]
+    fn download_file(&self, content: &str) {
+        use wasm_bindgen::JsCast;
+        use js_sys::Reflect;
+        use wasm_bindgen::JsValue;
+        
+        let window = web_sys::window().unwrap();
+        let document = window.document().unwrap();
+        
+        // Create a Blob with the content
+        let blob_parts = js_sys::Array::new();
+        blob_parts.push(&js_sys::JsString::from(content));
+        
+        let blob = web_sys::Blob::new_with_str_sequence(&blob_parts).unwrap();
+        
+        // Create object URL by calling the browser's createObjectURL function
+        // Using js_sys::Reflect to call the function
+        let global = js_sys::global();
+        let url_obj = global.unchecked_ref::<web_sys::Window>();
+        
+        // Create an object URL for the blob
+        let url_create_fn = Reflect::get(&url_obj, &JsValue::from_str("URL")).unwrap();
+        let create_obj_url = Reflect::get(
+            &url_create_fn, 
+            &JsValue::from_str("createObjectURL")
+        ).unwrap();
+        
+        let url = Reflect::apply(
+            &create_obj_url.dyn_ref().unwrap(),
+            &url_create_fn,
+            &js_sys::Array::of1(&blob)
+        ).unwrap().as_string().unwrap();
+        
+        // Create a temporary anchor element for downloading
+        let a = document.create_element("a").unwrap();
+        let a_element = a.dyn_into::<web_sys::HtmlElement>().unwrap();
+        
+        // Set up the anchor to trigger download
+        a_element.set_attribute("href", &url).unwrap();
+        a_element.set_attribute("download", &self.export_path).unwrap();
+        a_element.style().set_property("display", "none").unwrap();
+        
+        // Add to document, click, and remove
+        document.body().unwrap().append_child(&a_element).unwrap();
+        a_element.click();
+        document.body().unwrap().remove_child(&a_element).unwrap();
+        
+        // Clean up the URL by calling revokeObjectURL
+        let revoke_obj_url = Reflect::get(
+            &url_create_fn, 
+            &JsValue::from_str("revokeObjectURL")
+        ).unwrap();
+        
+        Reflect::apply(
+            &revoke_obj_url.dyn_ref().unwrap(),
+            &url_create_fn,
+            &js_sys::Array::of1(&JsValue::from_str(&url))
+        ).unwrap();
     }
     
     // Import shapes from Lua file
     pub fn import_shapes(&mut self) -> Result<(), io::Error> {
         self.save_state();
         
-        let content = fs::read_to_string(&self.import_path)?;
-        let shapes = self.parse_lua_shapes(&content)?;
-        
-        if !shapes.is_empty() {
-            self.shapes = shapes;
-            self.current_shape_idx = 0;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let content = match fs::read_to_string(&self.import_path) {
+                Ok(content) => content,
+                Err(e) => {
+                    self.show_error("Import Error", &format!("Failed to read file: {}", e));
+                    return Err(e);
+                }
+            };
+            
+            match self.parse_lua_shapes(&content) {
+                Ok(shapes) => {
+                    if !shapes.is_empty() {
+                        self.shapes = shapes;
+                        self.current_shape_idx = 0;
+                    }
+                    Ok(())
+                },
+                Err(e) => {
+                    self.show_error("Import Error", &format!("Failed to parse shapes: {}", e));
+                    Err(io::Error::new(io::ErrorKind::InvalidData, e))
+                }
+            }
         }
         
-        Ok(())
+        #[cfg(target_arch = "wasm32")]
+        {
+            // For WebAssembly, file reading is handled through the file input element
+            // The actual reading happens in handle_file_content
+            // Here we just return success
+            Ok(())
+        }
     }
     
     // Convert from data_structures::Shape to ast::Shape
     pub fn convert_to_ast_shape(&self, app_shape: &AppShape) -> crate::ast::Shape {
         let mut scales = Vec::new();
-        
-        // Create a single scale containing all vertices and ports
-        let mut scale = crate::ast::Scale {
-            verts: Vec::new(),
-            ports: Vec::new(),
+        let scale = crate::ast::Scale {
+            verts: app_shape.vertices.iter().map(|v| crate::ast::Vertex { x: v.x, y: v.y }).collect(),
+            ports: app_shape.ports.iter().map(|p| crate::ast::Port { 
+                edge: p.edge, 
+                position: p.position, 
+                port_type: Some(crate::ast::PortType::from_str(&p.port_type.to_string()))
+            }).collect(),
         };
-        
-        // Convert vertices
-        for vertex in &app_shape.vertices {
-            scale.verts.push(crate::ast::Vertex {
-                x: vertex.x,
-                y: vertex.y,
-            });
-        }
-        
-        // Convert ports
-        for port in &app_shape.ports {
-            scale.ports.push(crate::ast::Port {
-                edge: port.edge,
-                position: port.position,
-                port_type: match port.port_type {
-                    PortType::Default => Some(crate::ast::PortType::Default),
-                    PortType::ThrusterIn => Some(crate::ast::PortType::ThrusterIn),
-                    PortType::ThrusterOut => Some(crate::ast::PortType::ThrusterOut),
-                    PortType::Missile => Some(crate::ast::PortType::Missile),
-                    PortType::Launcher => Some(crate::ast::PortType::Launcher),
-                    PortType::WeaponIn => Some(crate::ast::PortType::WeaponIn),
-                    PortType::WeaponOut => Some(crate::ast::PortType::WeaponOut),
-                    PortType::Root => Some(crate::ast::PortType::Root),
-                    PortType::None => Some(crate::ast::PortType::None),
-                },
-            });
-        }
         
         scales.push(scale);
         
@@ -330,6 +425,18 @@ impl ShapeEditor {
             name: Some(app_shape.name.clone()),
             scales,
             launcher_radial: if app_shape.launcher_radial { Some(true) } else { None },
+            mirror_of: None,
+            group: None,
+            features: None,
+            fill_color: None,
+            fill_color1: None,
+            line_color: None,
+            durability: None,
+            density: None,
+            grow_rate: None,
+            shroud: None,
+            cannon: None,
+            thruster: None,
         }
     }
     
@@ -390,14 +497,25 @@ impl ShapeEditor {
         match parse_shapes_content(content) {
             Ok(shapes_file) => {
                 let mut app_shapes = Vec::new();
+                println!("Successfully parsed {} shapes", shapes_file.shapes.len());
+                
                 for ast_shape in &shapes_file.shapes {
-                    app_shapes.push(self.convert_from_ast_shape(ast_shape));
+                    let app_shape = self.convert_from_ast_shape(ast_shape);
+                    println!("Converted shape ID: {}, Name: {}, Vertices: {}, Ports: {}, launcher_radial: {}", 
+                             app_shape.id, 
+                             app_shape.name, 
+                             app_shape.vertices.len(), 
+                             app_shape.ports.len(),
+                             app_shape.launcher_radial);
+                    app_shapes.push(app_shape);
                 }
+                
                 Ok(app_shapes)
             }
-            Err(_) => {
-                // Fallback to the old parser if the new one fails
-                self.parse_lua_shapes_legacy(content)
+            Err(e) => {
+                println!("Failed to parse shapes: {}", e);
+                // Convert parse error to IO error with the message
+                Err(io::Error::new(io::ErrorKind::InvalidData, e))
             }
         }
     }
@@ -540,38 +658,155 @@ impl ShapeEditor {
         
         Ok(shapes)
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn select_import_file(&mut self) -> bool {
+        if let Some(path) = FileDialog::new()
+            .add_filter("Lua files", &["lua"])
+            .set_directory("/")
+            .pick_file() {
+                if let Some(path_str) = path.to_str() {
+                    self.import_path = path_str.to_string();
+                    return true;
+                }
+            }
+        false
+    }
+    
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn select_export_file(&mut self) -> bool {
+        if let Some(path) = FileDialog::new()
+            .add_filter("Lua files", &["lua"])
+            .set_directory("/")
+            .save_file() {
+                if let Some(path_str) = path.to_str() {
+                    self.export_path = path_str.to_string();
+                    return true;
+                }
+            }
+        false
+    }
+    
+    #[cfg(target_arch = "wasm32")]
+    pub fn has_file_input_element() -> bool {
+        use wasm_bindgen::JsCast;
+        let window = web_sys::window().unwrap();
+        let document = window.document().unwrap();
+        document.get_element_by_id("file-input").is_some()
+    }
+    
+    #[cfg(target_arch = "wasm32")]
+    pub fn create_file_input_element() {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::closure::Closure;
+        
+        let window = web_sys::window().unwrap();
+        let document = window.document().unwrap();
+        
+        // Create file input element if it doesn't exist
+        if !Self::has_file_input_element() {
+            let input = document.create_element("input").unwrap();
+            let input_element = input.dyn_into::<web_sys::HtmlInputElement>().unwrap();
+            
+            input_element.set_id("file-input");
+            input_element.set_type("file");
+            input_element.style().set_property("display", "none").unwrap();
+            input_element.set_accept(".lua");
+            
+            let body = document.body().unwrap();
+            body.append_child(&input_element).unwrap();
+        }
+    }
+    
+    #[cfg(target_arch = "wasm32")]
+    pub fn select_import_file(&mut self) -> bool {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::closure::Closure;
+        
+        Self::create_file_input_element();
+        
+        let window = web_sys::window().unwrap();
+        let document = window.document().unwrap();
+        
+        if let Some(input_element) = document.get_element_by_id("file-input") {
+            let input = input_element.dyn_into::<web_sys::HtmlInputElement>().unwrap();
+            input.click();
+            
+            // File selection is handled asynchronously through JavaScript events
+            // We'll read the file in the onchange event handler defined in the UI layer
+            return true;
+        }
+        
+        false
+    }
+    
+    #[cfg(target_arch = "wasm32")]
+    pub fn select_export_file(&mut self) -> bool {
+        // In WebAssembly, we can't directly save files, so we'll just use the text input
+        // The export function will handle saving differently for WASM
+        true
+    }
+    
+    // Handle file content from Web input
+    #[cfg(target_arch = "wasm32")]
+    pub fn handle_file_content(&mut self, content: String, filename: String) {
+        self.import_path = filename;
+        
+        match self.parse_lua_shapes(&content) {
+            Ok(shapes) => {
+                if !shapes.is_empty() {
+                    self.save_state();
+                    self.shapes = shapes;
+                    self.current_shape_idx = 0;
+                    self.status_message = Some(format!("{} {}", crate::translations::t("shapes_imported"), self.import_path));
+                    self.status_time = 3.0;
+                }
+            },
+            Err(e) => {
+                self.show_error("Import Error", &format!("Failed to parse shapes: {}", e));
+            }
+        }
+    }
 }
 
 // Implementing eframe::App trait
 impl eframe::App for ShapeEditor {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Set the app visuals to match our style
+        // Apply dark theme
         configure_visuals(ctx);
-        
-        // Render main navigation bar
-        render_nav_bar(ctx, self);
-        
-        // Render the top panel with controls
-        if self.active_tab != 1 { // Don't show in settings tab
-            render_top_panel(ctx, self);
-        }
         
         // Process keyboard shortcuts
         self.process_keyboard_shortcuts(ctx);
         
-        // Render the appropriate panel based on active tab
-        match self.active_tab {
-            0 => {
-                // In shapes tab, render side panel and central panel for editing
-                render_side_panel(ctx, self);
-                render_central_panel(ctx, self);
-            },
-            1 => render_settings_panel(ctx, self),
-            _ => {
-                // Default case - should not happen with only 2 tabs
-                render_side_panel(ctx, self);
-                render_central_panel(ctx, self);
+        // Render UI components based on the active tab
+        render_nav_bar(ctx, self);
+        
+        if self.active_tab == 0 {
+            // Shapes tab
+            render_top_panel(ctx, self);
+            render_side_panel(ctx, self);
+            render_central_panel(ctx, self);
+        } else if self.active_tab == 1 {
+            // Settings tab
+            render_settings_panel(ctx, self);
+        }
+        
+        // Show error dialog if needed
+        if self.show_error_dialog {
+            if show_error_dialog(
+                ctx, 
+                self.error_title.clone(), 
+                self.error_message.clone(), 
+                &mut self.show_error_dialog
+            ) {
+                // Dialog was closed
+                self.show_error_dialog = false;
             }
+        }
+        
+        // Request continuous redraw while status message is showing
+        if self.status_time > 0.0 {
+            ctx.request_repaint();
         }
     }
 }

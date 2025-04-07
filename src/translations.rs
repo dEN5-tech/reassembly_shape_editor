@@ -1,5 +1,8 @@
+// Fixed for WASM support
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs::File;
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Read;
 use std::sync::RwLock;
 use once_cell::sync::Lazy;
@@ -20,12 +23,22 @@ static TRANSLATIONS: Lazy<RwLock<TranslationMap>> = Lazy::new(|| {
 });
 
 /// Load translations from the JSON file
+#[cfg(not(target_arch = "wasm32"))]
 fn load_translations() -> Result<TranslationMap, Box<dyn std::error::Error>> {
     let mut file = File::open("assets/translations.json")?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)?;
     
     let translations: TranslationMap = serde_json::from_str(&contents)?;
+    Ok(translations)
+}
+
+/// Load translations for WebAssembly target
+#[cfg(target_arch = "wasm32")]
+fn load_translations() -> Result<TranslationMap, Box<dyn std::error::Error>> {
+    // Include translations directly in the WASM binary
+    let translations_json = include_str!("../assets/translations.json");
+    let translations: TranslationMap = serde_json::from_str(translations_json)?;
     Ok(translations)
 }
 
@@ -72,10 +85,18 @@ pub fn get_current_language() -> String {
 }
 
 /// Reload translations from the file
+#[cfg(not(target_arch = "wasm32"))]
 pub fn reload_translations() -> Result<(), Box<dyn std::error::Error>> {
     let new_translations = load_translations()?;
     if let Ok(mut translations) = TRANSLATIONS.write() {
         *translations = new_translations;
     }
     Ok(())
-} 
+}
+
+/// Reload translations for WebAssembly target (no-op since we use embedded data)
+#[cfg(target_arch = "wasm32")]
+pub fn reload_translations() -> Result<(), Box<dyn std::error::Error>> {
+    // In WASM, translations are embedded, so no need to reload from file
+    Ok(())
+}
