@@ -236,3 +236,32 @@ After exporting your shapes, use them in your Reassembly mod by referencing the 
   },
 }
 ```
+
+## Continuous Integration
+
+This project uses GitHub Actions for automated building on multiple platforms:
+
+### Automated Builds
+
+The project is automatically built for:
+- Windows
+- macOS
+- Linux
+- WebAssembly
+
+You can find the workflow configuration in `.github/workflows/rust-build.yml`.
+
+### GitHub Actions Features
+
+- Automatically builds when pushing to the main branch
+- Builds on pull requests to ensure changes work on all platforms
+- Creates downloadable artifacts for each platform
+- Builds the WebAssembly version for web deployment
+- Runs tests to verify functionality
+
+### Manually Triggering Builds
+
+You can manually trigger a build through the GitHub Actions interface:
+1. Go to the "Actions" tab in your GitHub repository
+2. Select the "Rust Build" workflow
+3. Click "Run workflow" and select the branch to build from
